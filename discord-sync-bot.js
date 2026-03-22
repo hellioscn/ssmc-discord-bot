@@ -55,10 +55,10 @@ async function fetchFromChannel(channelId) {
             });
 
             if (allImages.length > 0 || fullBio.length > 0) {
-                // Discord resim linklerini bio metninden tamamen temizle (zaten yukarıda/slider'da varlar)
-                const discordImgRegex = /https:\/\/(?:cdn|media)\.discordapp\.(?:com|net)\/attachments\/[^\s\)\>\]\"\<]+/g;
+                // Tüm linkleri (URL'leri) bio metninden tamamen temizle
+                const urlRegex = /https?:\/\/[^\s\)\>\]\"\<]+/g;
                 let cleanBilgi = fullBio
-                    .replace(discordImgRegex, '')
+                    .replace(urlRegex, '')
                     .replace(/[\*`|]/g, "")
                     .trim()
                     .replace(/\n/g, "<br>");
