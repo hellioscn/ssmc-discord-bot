@@ -12,6 +12,7 @@ const MEMBERS_CHANNEL_ID = '1283170980315005048';
 const MEMORIAL_CHANNEL_ID = '1283455369212858473';
 const GALLERY_CHANNEL_ID = '1485411952137076746';
 const PATCHES_CHANNEL_ID = '1485409905765781555';
+const KULTUR_CHANNEL_ID = '1259277964294623332';
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'bot_data.json');
 
@@ -27,7 +28,8 @@ let cache = {
     members: { data: null, lastRefresh: null },
     memorial: { data: null, lastRefresh: null },
     gallery: { data: null, lastRefresh: null },
-    patches: { data: null, lastRefresh: null }
+    patches: { data: null, lastRefresh: null },
+    kultur: { data: null, lastRefresh: null }
 };
 
 async function fetchFromChannel(channelId) {
@@ -114,16 +116,18 @@ async function fetchFromChannel(channelId) {
 async function bulkRefresh() {
     console.log("--- Toplu Veri Çekme İşlemi Başlatıldı ---");
     try {
-        const [members, memorial, gallery, patches] = await Promise.all([
+        const [members, memorial, gallery, patches, kultur] = await Promise.all([
             fetchFromChannel(MEMBERS_CHANNEL_ID),
             fetchFromChannel(MEMORIAL_CHANNEL_ID),
             fetchFromChannel(GALLERY_CHANNEL_ID),
-            fetchFromChannel(PATCHES_CHANNEL_ID)
+            fetchFromChannel(PATCHES_CHANNEL_ID),
+            fetchFromChannel(KULTUR_CHANNEL_ID)
         ]);
         cache.members.data = members;
         cache.memorial.data = memorial;
         cache.gallery.data = gallery;
         cache.patches.data = patches;
+        cache.kultur.data = kultur;
         
         // Diske Kaydet
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
@@ -144,6 +148,7 @@ function loadInitialData() {
             cache.memorial.data = parsed.memorial?.data || null;
             cache.gallery.data = parsed.gallery?.data || null;
             cache.patches.data = parsed.patches?.data || null;
+            cache.kultur.data = parsed.kultur?.data || null;
             console.log("--- Başlangıç Verileri Diskten Yüklendi ---");
         } catch (e) {
             console.error("Diskten veri yükleme hatası:", e);
@@ -156,6 +161,7 @@ app.get('/api/members', (req, res) => res.json(cache.members.data || { members: 
 app.get('/api/memoryof', (req, res) => res.json(cache.memorial.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/gallery', (req, res) => res.json(cache.gallery.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/patches', (req, res) => res.json(cache.patches.data || { members: [], error: "Henüz veri yüklenmedi" }));
+app.get('/api/mc-kultur', (req, res) => res.json(cache.kultur.data || { members: [], error: "Henüz veri yüklenmedi" }));
 
 app.get('/api/refresh', async (req, res) => {
     const success = await bulkRefresh();
