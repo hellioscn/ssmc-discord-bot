@@ -1,82 +1,103 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
 
-// --- AYARLAR ---
 const TOKEN = process.env.DISCORD_TOKEN; 
 const CHANNEL_ID = '1283170980315005048';
 const PORT = process.env.PORT || 3000;
-const CACHE_LIMIT = 24 * 60 * 60 * 1000; // 24 Saat
-
-// --- ÖNBELLEK ---
-let cachedMembers = [];
-let lastCacheUpdate = 0;
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-// Veri Ayrıştırma - İsim Garantili Sürüm
-function parseMemberData(post, threadName) {
-    const content = post.content || "";
-    const name = (threadName || "Bilinmeyen Üye").replace(/\*+/g, "").trim().toUpperCase();
-    const images = post.attachments.map(a => a.url);
-
-    return {
-        isim: name,
-        rol: "ÜYE",
-        gorsel: images[0] || "",
-        gorseller: images,
-        bilgi: content.replace(/\*+/g, "").trim().replace(/\n/g, "<br>")
-    };
-}
-
-// Discord'dan Veri Çekme - Arşiv ve Hız Optimize
 async function refreshCache() {
+    console.log("--- Taram Başlatıldı ---");
     try {
-        console.log("Tarama başlatıldı...");
         const channel = await client.channels.fetch(CHANNEL_ID);
-        if (!channel) return console.log("Hata: Kanal bulunamadı.");
+        if (!channel) {
+            console.log("KRİTİK HATA: Kanal bulunamadı! ID yanlış olabilir.");
+            return [];
+        }
 
-        const active = await channel.threads.fetchActive();
-        const archived = await channel.threads.fetchArchived({ type: 'public', limit: 50 });
+        console.log(`Kanal Bulundu: #${channel.name} | Tip: ${channel.type} (Forum=15)`);
+
+        // Aktif ve Arşivlenmiş başlıkları çek
+        const active = await channel.threads.fetchActive().catch(e => { console.log("Aktif çekme hatası:", e.message); return { threads: new Map() }});
+        const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(e => { console.log("Arşiv çekme hatası:", e.message); return { threads: new Map() }});
+        
         const allThreads = [
             ...(active.threads ? Array.from(active.threads.values()) : []),
             ...(archived.threads ? Array.from(archived.threads.values()) : [])
         ];
         
+        console.log(`Toplam Görünür Başlık: ${allThreads.length}`);
+
         const memberList = [];
         for (const thread of allThreads) {
-            const messages = await thread.messages.fetch({ limit: 1 });
-            const firstMsg = messages.first();
-            if (firstMsg) {
-                memberList.push(parseMemberData(firstMsg, thread.name));
-            }
+            // Mesaj limitini 100'e çıkarıyoruz (tüm biyografi ve resimler için)
+            const messages = await thread.messages.fetch({ limit: 100 }).catch(e => { 
+                console.log(`Mesaj çekilemedi (#${thread.name}):`, e.message); 
+                return new Map() 
+            });
+            
+            let allImages = [];
+            let fullBio = "";
+
+            // Mesajları kronolojik (eskiden yeniye) sıralayarak birleştir
+            messages.reverse().forEach(msg => {
+                // Görselleri topla
+                if (msg.attachments.size > 0) {
+                    allImages.push(...msg.attachments.map(a => a.url));
+                }
+                // Metin içeriğini (varsa) topla
+                if (msg.content && msg.content.trim().length > 0) {
+                    fullBio += msg.content + "\n\n";
+                }
+            });
+
+            memberList.push({
+                isim: thread.name.toUpperCase(),
+                rol: "ÜYE",
+                gorsel: allImages[0] || "",
+                gorseller: allImages,
+                // Biyografiyi temizle (Markdown karakterlerini ve gereksiz boşlukları at)
+                bilgi: fullBio.replace(/[\*_`]/g, "").trim().replace(/\n/g, "<br>")
+            });
         }
-        cachedMembers = memberList;
-        lastCacheUpdate = Date.now();
-        console.log(`Bitti: ${cachedMembers.length} üye yüklendi.`);
-    } catch (err) { console.error("Hata:", err.message); }
+        
+        console.log(`Başarıyla Ayrıştırılan Üye: ${memberList.length}`);
+        return {
+            members: memberList,
+            lastRefresh: new Date().toLocaleString('tr-TR')
+        };
+    } catch (err) {
+        console.error("GENEL HATA:", err.stack);
+        return [];
+    }
 }
 
-// API Endpointleri
+let cachedData = [];
 app.get('/api/members', async (req, res) => {
-    if (cachedMembers.length === 0 || (Date.now() - lastCacheUpdate > CACHE_LIMIT)) await refreshCache();
-    res.json(cachedMembers);
+    if (cachedData.length === 0) cachedData = await refreshCache();
+    res.json(cachedData);
 });
 
 app.get('/api/refresh', async (req, res) => {
-    await refreshCache();
-    res.json({ message: "Yenilendi", count: cachedMembers.length });
+    cachedData = await refreshCache();
+    res.json({ message: "Yenilendi", count: cachedData.length });
 });
 
-client.once('ready', () => { 
+client.once('ready', async () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
-    refreshCache(); 
+    cachedData = await refreshCache();
 });
 
 client.login(TOKEN);
-app.listen(PORT, () => console.log(`Aktif port: ${PORT}`));
+app.listen(PORT, () => console.log(`Server dinlemede: ${PORT}`));
