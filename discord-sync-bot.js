@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
 
@@ -17,43 +17,63 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+function parseMemberData(post) {
+    const content = post.content || "";
+    // İsmi her zaman Forum Başlığından al (En güvenlisi)
+    let name = post.thread ? post.thread.name : (content.split('\n')[0] || "ÜYE");
+    name = name.replace(/\*+/g, "").trim().toUpperCase();
+
+    // Biyografiyi temizle (BORN, AGE gibi başlıkları metin içinde kalsın ama süslü kalsın)
+    let info = content.replace(/\*+/g, "").trim();
+
+    const images = post.attachments.map(a => a.url);
+
+    return {
+        isim: name,
+        rol: "ÜYE",
+        gorsel: images[0] || "",
+        gorseller: images,
+        bilgi: info.replace(/\n/g, "<br>")
+    };
+}
+
 async function refreshCache() {
     try {
+        console.log("Tarama başlatıldı...");
         const channel = await client.channels.fetch(CHANNEL_ID);
-        if (!channel || !channel.isThreadContainer()) return;
+        if (!channel) return console.log("Kanal bulunamadı.");
 
+        // Aktif ve Arşivlenmiş başlıkları çek (Limitleri makul tutalım)
         const active = await channel.threads.fetchActive();
-        const archived = await channel.threads.fetchArchived({ type: 'public', fetchAll: true });
-        const allThreads = [...(active.threads ? active.threads.values() : []), ...(archived.threads ? archived.threads.values() : [])];
+        const archived = await channel.threads.fetchArchived({ type: 'public', limit: 50 });
         
+        const allThreads = [
+            ...(active.threads ? Array.from(active.threads.values()) : []),
+            ...(archived.threads ? Array.from(archived.threads.values()) : [])
+        ];
+        
+        console.log(`Toplam başlık: ${allThreads.length}`);
+
         const memberList = [];
         for (const thread of allThreads) {
-            const messages = await thread.messages.fetch();
-            let allImages = [];
-            let fullBio = "";
-
-            // Mesajları kronolojik sıraya sok ve içerikleri topla
-            messages.reverse().forEach(msg => {
-                if (msg.attachments.size > 0) allImages.push(...msg.attachments.map(a => a.url));
-                if (msg.content) fullBio += msg.content + "\n";
-            });
-
-            memberList.push({
-                isim: thread.name.toUpperCase(),
-                rol: "ÜYE", 
-                gorsel: allImages[0] || "",
-                gorseller: allImages,       
-                bilgi: fullBio.replace(/\*+/g, "").trim().replace(/\n/g, "<br>")
-            });
+            // Sadece ilk mesajı çekmek çok daha hızlıdır
+            const messages = await thread.messages.fetch({ limit: 1 });
+            const firstMsg = messages.first();
+            if (firstMsg) {
+                firstMsg.thread = thread;
+                memberList.push(parseMemberData(firstMsg));
+            }
         }
         cachedMembers = memberList;
         lastCacheUpdate = Date.now();
-        console.log("Veriler Tazelendi.");
-    } catch (err) { console.error("Hata:", err.message); }
+        console.log("Veriler başarıyla güncellendi.");
+    } catch (err) { console.error("HATA:", err.message); }
 }
 
 app.get('/api/members', async (req, res) => {
-    if (cachedMembers.length === 0 || (Date.now() - lastCacheUpdate > CACHE_LIMIT)) await refreshCache();
+    if (cachedMembers.length === 0 || (Date.now() - lastCacheUpdate > CACHE_LIMIT)) {
+        await refreshCache();
+    }
     res.json(cachedMembers);
 });
 
@@ -62,6 +82,10 @@ app.get('/api/refresh', async (req, res) => {
     res.json({ message: "Yenilendi", count: cachedMembers.length });
 });
 
-client.once('ready', () => { refreshCache(); });
+client.once('ready', () => { 
+    console.log(`Bot Yayında: ${client.user.tag}`);
+    refreshCache(); 
+});
+
 client.login(TOKEN);
-app.listen(PORT, () => console.log(`Aktif: ${PORT}`));
+app.listen(PORT, () => console.log(`Aktif port: ${PORT}`));
