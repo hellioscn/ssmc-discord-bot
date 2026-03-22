@@ -6,8 +6,8 @@ const app = express();
 app.use(cors());
 
 // --- AYARLAR (Burayı Kendi Bilgilerinle Doldur) ---
-const TOKEN = 'SENIN_BOT_TOKENIN_BURAYA';
-const CHANNEL_ID = 'SENIN_FORUM_KANAL_ID_BURAYA';
+const TOKEN = process.env.DISCORD_TOKEN;
+const CHANNEL_ID = '1283170980315005048';
 const PORT = process.env.PORT || 3000;
 
 const client = new Client({
