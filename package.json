@@ -1,0 +1,14 @@
+{
+  "name": "ssmc-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord Sync Bot for SSMC",
+  "main": "discord-sync-bot.js",
+  "scripts": {
+    "start": "node discord-sync-bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}
