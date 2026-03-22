@@ -49,19 +49,26 @@ async function fetchFromChannel(channelId) {
                 if (msg.attachments.size > 0) {
                     allImages.push(...msg.attachments.map(a => a.url));
                 }
-                // cleanContent otomatik olarak etiketleri (@İsim) düz metne çevirir
-                if (msg.cleanContent && msg.cleanContent.trim().length > 0) {
-                    fullBio += msg.cleanContent + "\n\n";
+                if (msg.content && msg.content.trim().length > 0) {
+                    fullBio += msg.content + "\n\n";
                 }
             });
 
             if (allImages.length > 0 || fullBio.length > 0) {
+                // Discord resim linklerini bio metninden tamamen temizle (zaten yukarıda/slider'da varlar)
+                const discordImgRegex = /https:\/\/(?:cdn|media)\.discordapp\.(?:com|net)\/attachments\/[^\s\)\>\]\"\<]+/g;
+                let cleanBilgi = fullBio
+                    .replace(discordImgRegex, '')
+                    .replace(/[\*`|]/g, "")
+                    .trim()
+                    .replace(/\n/g, "<br>");
+
                 memberList.push({
                     isim: thread.name.toUpperCase(),
                     rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : "ANI",
                     gorsel: allImages[0] || "",
                     gorseller: allImages,
-                    bilgi: fullBio.replace(/[\*`|]/g, "").trim().replace(/\n/g, "<br>")
+                    bilgi: cleanBilgi
                 });
             }
         }
