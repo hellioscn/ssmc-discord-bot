@@ -23,14 +23,30 @@ let cache = {
     memorial: { data: null, lastRefresh: null }
 };
 
+// Discord OwnerID -> Karakter Adı eşleşmesi için global harita
+let userToCharacterMap = {};
+
+async function refreshAllData() {
+    console.log("--- Global Senkronizasyon Başlatıldı ---");
+    
+    // Önce Üyeleri tarayalım ki haritayı dolduralım
+    const membersData = await fetchFromChannel(MEMBERS_CHANNEL_ID);
+    cache.members.data = membersData;
+    cache.members.lastRefresh = new Date().toLocaleString('tr-TR');
+
+    // Sonra Kayıpları tarayalım (Üyelerden gelen haritayı kullanabilir)
+    const memorialData = await fetchFromChannel(MEMORIAL_CHANNEL_ID);
+    cache.memorial.data = memorialData;
+    cache.memorial.lastRefresh = new Date().toLocaleString('tr-TR');
+    
+    console.log("--- Global Senkronizasyon Tamamlandı ---");
+}
+
 async function fetchFromChannel(channelId) {
     console.log(`--- Tarama Başlatıldı [${channelId}] [${new Date().toLocaleTimeString()}] ---`);
     try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel) {
-            console.error(`KRİTİK HATA: Kanal bulunamadı! [${channelId}]`);
-            return { members: [], error: "Kanal bulunamadı" };
-        }
+        if (!channel) return { members: [], error: "Kanal bulunamadı" };
 
         const active = await channel.threads.fetchActive().catch(() => ({ threads: new Map() }));
         const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(() => ({ threads: new Map() }));
@@ -40,18 +56,17 @@ async function fetchFromChannel(channelId) {
             ...(archived.threads ? Array.from(archived.threads.values()) : [])
         ];
         
-        console.log(`Kanal [${channelId}] - Görünür Başlık Sayısı: ${allThreads.length}`);
-
         const memberList = [];
         for (const thread of allThreads) {
-            const messages = await thread.messages.fetch({ limit: 50 }).catch(e => { 
-                console.log(`Hata (#${thread.name}): ${e.message}`); 
-                return new Map();
-            });
+            // Eğer Üyeler kanalını tarıyorsak, sahiplik eşleşmesini kaydet
+            if (channelId === MEMBERS_CHANNEL_ID) {
+                userToCharacterMap[thread.ownerId] = thread.name.toUpperCase();
+            }
+
+            const messages = await thread.messages.fetch({ limit: 50 }).catch(() => new Map());
             
             let allImages = [];
             let fullBio = "";
-
             const sortedMsgs = Array.from(messages.values()).reverse();
             
             sortedMsgs.forEach(msg => {
@@ -64,51 +79,51 @@ async function fetchFromChannel(channelId) {
             });
 
             if (allImages.length > 0 || fullBio.length > 0) {
+                const characterName = thread.name.toUpperCase();
+                // Biyografi içindeki Discord etiketlerini (<@123...>) sitemizdeki isimlerle değiştir
+                let cleanBilgi = fullBio.replace(/[\*`|]/g, "").trim().replace(/\n/g, "<br>");
+                
+                // Etiketleri (mention) bul ve haritadan karşılığını yaz
+                cleanBilgi = cleanBilgi.replace(/<@!?(\d+)>/g, (match, userId) => {
+                    return userToCharacterMap[userId] || match; 
+                });
+
                 memberList.push({
-                    isim: thread.name.toUpperCase(),
+                    isim: characterName,
+                    sahibi: userToCharacterMap[thread.ownerId] || thread.ownerId, 
                     rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : "ANI",
                     gorsel: allImages[0] || "",
                     gorseller: allImages,
-                    bilgi: fullBio.replace(/[\*`]/g, "").trim().replace(/\n/g, "<br>")
+                    bilgi: cleanBilgi
                 });
             }
         }
         
-        console.log(`Kanal [${channelId}] - İşlem Tamamlandı: ${memberList.length} Kayıt.`);
-        return {
-            members: memberList,
-            lastRefresh: new Date().toLocaleString('tr-TR')
-        };
+        return { members: memberList, lastRefresh: new Date().toLocaleString('tr-TR') };
     } catch (err) {
-        console.error(`REFRESH ERROR [${channelId}]:`, err);
+        console.error(`Error [${channelId}]:`, err);
         return { members: [], error: err.message };
     }
 }
 
 app.get('/api/members', async (req, res) => {
-    if (!cache.members.data || cache.members.data.members.length === 0) {
-        cache.members.data = await fetchFromChannel(MEMBERS_CHANNEL_ID);
-    }
+    if (!cache.members.data) await refreshAllData();
     res.json(cache.members.data);
 });
 
 app.get('/api/memoryof', async (req, res) => {
-    if (!cache.memorial.data || cache.memorial.data.members.length === 0) {
-        cache.memorial.data = await fetchFromChannel(MEMORIAL_CHANNEL_ID);
-    }
+    if (!cache.memorial.data) await refreshAllData();
     res.json(cache.memorial.data);
 });
 
 app.get('/api/refresh', async (req, res) => {
-    cache.members.data = await fetchFromChannel(MEMBERS_CHANNEL_ID);
-    cache.memorial.data = await fetchFromChannel(MEMORIAL_CHANNEL_ID);
-    res.json({ message: "Tüm cache yenilendi" });
+    await refreshAllData();
+    res.json({ message: "Tüm cache ve haritalar yenilendi", count: Object.keys(userToCharacterMap).length });
 });
 
 client.once('ready', async () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
-    cache.members.data = await fetchFromChannel(MEMBERS_CHANNEL_ID);
-    cache.memorial.data = await fetchFromChannel(MEMORIAL_CHANNEL_ID);
+    await refreshAllData();
 });
 
 client.login(TOKEN);
