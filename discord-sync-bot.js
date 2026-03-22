@@ -20,18 +20,27 @@ const client = new Client({
 
 function parseMemberData(post) {
     const content = post.content || "";
-    const title = post.thread ? post.thread.name : (content.split('\n')[0] || "Bilinmeyen Üye");
+    
+    // ÖNCELİK SIRASI: 1. Forum Başlığı, 2. Mesaj içindeki 'İsim:' alanı, 3. İlk satır
+    let name = post.thread ? post.thread.name : "";
+    
+    if (!name || name === "") {
+        name = content.match(/(?:İsim|Name|Adı):\s*(.*)/i)?.[1]?.trim() || content.split('\n')[0];
+    }
+
+    // Eğer hala boşsa veya çok uzunsa (hata payı)
+    if (!name || name.length > 50) name = "Bilinmeyen Üye";
+
     const born = content.match(/Born:\s*(.*)/i)?.[1]?.trim() || "";
     const role = content.match(/Role:\s*(.*)/i)?.[1]?.trim() || "ÜYE";
-    
-    // TÜM GÖRSELLERİ TOPLA
     const images = post.attachments.map(a => a.url);
 
+    // Biyografi kısmından başlığı ve diğer etiketleri temizle
     let info = content;
-    info = info.replace(/\*.*?\*/g, "").replace(/Born:.*|Age:.*|Occupations:.*|Role:.*/gi, "").trim();
+    info = info.replace(/(?:İsim|Name|Adı|Born|Age|Occupations|Role):.*/gi, "").replace(/\*.*?\*/g, "").trim();
 
     return {
-        isim: title.toUpperCase(),
+        isim: name.toUpperCase(),
         rol: role.toUpperCase(),
         gorsel: images[0] || "", 
         gorseller: images,       
@@ -39,6 +48,7 @@ function parseMemberData(post) {
         bilgi: info || "Silence Souls M.C. Üyesi"
     };
 }
+
 
 app.get('/api/members', async (req, res) => {
     try {
