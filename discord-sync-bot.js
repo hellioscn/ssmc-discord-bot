@@ -18,76 +18,78 @@ const client = new Client({
 });
 
 async function refreshCache() {
-    console.log("--- Taram Başlatıldı ---");
+    console.log("--- Tarama Başlatıldı [" + new Date().toLocaleTimeString() + "] ---");
     try {
         const channel = await client.channels.fetch(CHANNEL_ID);
         if (!channel) {
-            console.log("KRİTİK HATA: Kanal bulunamadı! ID yanlış olabilir.");
-            return [];
+            console.log("KRİTİK HATA: Kanal bulunamadı!");
+            return { members: [], error: "Kanal bulunamadı" };
         }
 
-        console.log(`Kanal Bulundu: #${channel.name} | Tip: ${channel.type} (Forum=15)`);
-
-        // Aktif ve Arşivlenmiş başlıkları çek
-        const active = await channel.threads.fetchActive().catch(e => { console.log("Aktif çekme hatası:", e.message); return { threads: new Map() }});
-        const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(e => { console.log("Arşiv çekme hatası:", e.message); return { threads: new Map() }});
+        const active = await channel.threads.fetchActive().catch(() => ({ threads: new Map() }));
+        const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(() => ({ threads: new Map() }));
         
         const allThreads = [
             ...(active.threads ? Array.from(active.threads.values()) : []),
             ...(archived.threads ? Array.from(archived.threads.values()) : [])
         ];
         
-        console.log(`Toplam Görünür Başlık: ${allThreads.length}`);
+        console.log(`Görünür Başlık Sayısı: ${allThreads.length}`);
 
         const memberList = [];
         for (const thread of allThreads) {
-            // Mesaj limitini 100'e çıkarıyoruz (tüm biyografi ve resimler için)
-            const messages = await thread.messages.fetch({ limit: 100 }).catch(e => { 
-                console.log(`Mesaj çekilemedi (#${thread.name}):`, e.message); 
-                return new Map() 
+            // Limiti 50'ye çekiyoruz (Daha stabil, performanslı ve Rate Limit dostu)
+            const messages = await thread.messages.fetch({ limit: 50 }).catch(e => { 
+                console.log(`Hata (#${thread.name}): ${e.message}`); 
+                return new Map();
             });
             
             let allImages = [];
             let fullBio = "";
 
-            // Mesajları kronolojik (eskiden yeniye) sıralayarak birleştir
-            messages.reverse().forEach(msg => {
-                // Görselleri topla
+            // Mesajları kronolojikleştir
+            const sortedMsgs = Array.from(messages.values()).reverse();
+            
+            sortedMsgs.forEach(msg => {
                 if (msg.attachments.size > 0) {
                     allImages.push(...msg.attachments.map(a => a.url));
                 }
-                // Metin içeriğini (varsa) topla
                 if (msg.content && msg.content.trim().length > 0) {
                     fullBio += msg.content + "\n\n";
                 }
             });
 
-            memberList.push({
-                isim: thread.name.toUpperCase(),
-                rol: "ÜYE",
-                gorsel: allImages[0] || "",
-                gorseller: allImages,
-                // Biyografiyi temizle (Markdown karakterlerini ve gereksiz boşlukları at)
-                bilgi: fullBio.replace(/[\*_`]/g, "").trim().replace(/\n/g, "<br>")
-            });
+            if (allImages.length > 0 || fullBio.length > 0) {
+                memberList.push({
+                    isim: thread.name.toUpperCase(),
+                    rol: "ÜYE",
+                    gorsel: allImages[0] || "",
+                    gorseller: allImages,
+                    bilgi: fullBio.replace(/[\*_`]/g, "").trim().replace(/\n/g, "<br>")
+                });
+            }
         }
         
-        console.log(`Başarıyla Ayrıştırılan Üye: ${memberList.length}`);
+        console.log(`İşlem Tamamlandı: ${memberList.length} Üye.`);
         return {
             members: memberList,
             lastRefresh: new Date().toLocaleString('tr-TR')
         };
     } catch (err) {
-        console.error("GENEL HATA:", err.stack);
-        return [];
+        console.error("REFRESH ERROR:", err);
+        return { members: [], error: err.message };
     }
 }
 
-let cachedData = [];
+
 app.get('/api/members', async (req, res) => {
-    if (cachedData.length === 0) cachedData = await refreshCache();
+    // Eğer cache boşsa veya hata döndüyse yenile
+    if (!cachedData || !cachedData.members || cachedData.members.length === 0) {
+        cachedData = await refreshCache();
+    }
     res.json(cachedData);
 });
+
 
 app.get('/api/refresh', async (req, res) => {
     cachedData = await refreshCache();
