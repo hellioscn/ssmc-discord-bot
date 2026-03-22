@@ -69,7 +69,7 @@ async function fetchFromChannel(channelId) {
                     rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : "ANI",
                     gorsel: allImages[0] || "",
                     gorseller: allImages,
-                    bilgi: fullBio.replace(/[\*_`]/g, "").trim().replace(/\n/g, "<br>")
+                    bilgi: fullBio.replace(/[\*`]/g, "").trim().replace(/\n/g, "<br>")
                 });
             }
         }
