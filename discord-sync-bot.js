@@ -50,29 +50,33 @@ function parseMemberData(post) {
 app.get('/api/members', async (req, res) => {
     try {
         const channel = await client.channels.fetch(CHANNEL_ID);
-        if (!channel || !channel.isThreadContainer()) {
-            return res.status(404).json({ error: "Forum kanalı bulunamadı veya yanlis ID." });
-        }
+        if (!channel) return res.status(404).json({ error: "Kanal bulunamadı! ID doğru mu?" });
 
-        // Forum başlıklarını (Thread) çek
+        // HATA AYIKLAMA: Kanal tipini kontrol et
+        console.log("Kanal Tipi:", channel.type);
+
         const threads = await channel.threads.fetchActive();
         const memberList = [];
 
         for (const [id, thread] of threads.threads) {
-            // Her başlığın ilk mesajını (üyenin ana postu) al
             const messages = await thread.messages.fetch({ limit: 1 });
             const firstMsg = messages.first();
             if (firstMsg) {
                 memberList.push(parseMemberData(firstMsg));
             }
         }
-
         res.json(memberList);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Discord verisi çekilemedi." });
+        // GERÇEK HATAYI EKRANA BASALIM
+        console.error("DETAYLI HATA:", err);
+        res.status(500).json({ 
+            error: "Discord hatası!", 
+            detay: err.message,
+            kod: err.code 
+        });
     }
 });
+
 
 client.once('ready', () => {
     console.log(`Bot Aktif: ${client.user.tag}`);
