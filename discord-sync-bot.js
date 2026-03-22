@@ -9,6 +9,11 @@ app.use(cors());
 const TOKEN = process.env.DISCORD_TOKEN; 
 const CHANNEL_ID = '1283170980315005048';
 const PORT = process.env.PORT || 3000;
+const CACHE_LIMIT = 24 * 60 * 60 * 1000; // 24 Saat (Milisaniye)
+
+// --- ÖNBELLEK DEĞİŞKENLERİ ---
+let cachedMembers = [];
+let lastCacheUpdate = 0;
 
 const client = new Client({
     intents: [
@@ -18,24 +23,20 @@ const client = new Client({
     ]
 });
 
+// Veri Ayrıştırma Fonksiyonu
 function parseMemberData(post) {
     const content = post.content || "";
-    
-    // ÖNCELİK SIRASI: 1. Forum Başlığı, 2. Mesaj içindeki 'İsim:' alanı, 3. İlk satır
     let name = post.thread ? post.thread.name : "";
     
     if (!name || name === "") {
         name = content.match(/(?:İsim|Name|Adı):\s*(.*)/i)?.[1]?.trim() || content.split('\n')[0];
     }
-
-    // Eğer hala boşsa veya çok uzunsa (hata payı)
     if (!name || name.length > 50) name = "Bilinmeyen Üye";
 
     const born = content.match(/Born:\s*(.*)/i)?.[1]?.trim() || "";
     const role = content.match(/Role:\s*(.*)/i)?.[1]?.trim() || "ÜYE";
     const images = post.attachments.map(a => a.url);
 
-    // Biyografi kısmından başlığı ve diğer etiketleri temizle
     let info = content;
     info = info.replace(/(?:İsim|Name|Adı|Born|Age|Occupations|Role):.*/gi, "").replace(/\*.*?\*/g, "").trim();
 
@@ -49,13 +50,19 @@ function parseMemberData(post) {
     };
 }
 
-
-app.get('/api/members', async (req, res) => {
+// Discord'dan Veri Çekme Fonksiyonu
+async function refreshCache() {
     try {
+        console.log("Discord'dan güncel veriler çekiliyor...");
         const channel = await client.channels.fetch(CHANNEL_ID);
-        if (!channel || !channel.isThreadContainer()) return res.status(404).json({ error: "Forum kanalı bulunamadı." });
+        if (!channel || !channel.isThreadContainer()) {
+            console.error("Hata: Forum kanalı bulunamadı.");
+            return;
+        }
+
         const threads = await channel.threads.fetchActive();
         const memberList = [];
+
         for (const [id, thread] of threads.threads) {
             const messages = await thread.messages.fetch({ limit: 1 });
             const firstMsg = messages.first();
@@ -64,13 +71,37 @@ app.get('/api/members', async (req, res) => {
                 memberList.push(parseMemberData(firstMsg));
             }
         }
-        res.json(memberList);
+
+        cachedMembers = memberList;
+        lastCacheUpdate = Date.now();
+        console.log(`${cachedMembers.length} üye önbelleğe alındı.`);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Discord verisi çekilemedi.", detay: err.message });
+        console.error("Önbellek yenilenirken hata:", err.message);
     }
+}
+
+// API Endpoint - Her zaman bellekteki veriyi döner
+app.get('/api/members', async (req, res) => {
+    const now = Date.now();
+    
+    // Eğer önbellek boşsa veya süresi dolmuşsa (24 saat) yenile
+    if (cachedMembers.length === 0 || (now - lastCacheUpdate > CACHE_LIMIT)) {
+        await refreshCache();
+    }
+
+    res.json(cachedMembers);
 });
 
-client.once('ready', () => { console.log(`Bot Aktif: ${client.user.tag}`); });
+// Manuel Yenileme Linki (İsteğe bağlı: https://botadi.onrender.com/api/refresh)
+app.get('/api/refresh', async (req, res) => {
+    await refreshCache();
+    res.json({ message: "Önbellek manuel olarak yenilendi.", count: cachedMembers.length });
+});
+
+client.once('ready', () => { 
+    console.log(`Bot Aktif: ${client.user.tag}`); 
+    refreshCache(); // Başlangıçta 1 kez verileri çek
+});
+
 client.login(TOKEN);
 app.listen(PORT, () => { console.log(`API Sunucusu çalışıyor: PORT ${PORT}`); });
