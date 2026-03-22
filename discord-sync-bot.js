@@ -55,13 +55,37 @@ async function fetchFromChannel(channelId) {
             });
 
             if (allImages.length > 0 || fullBio.length > 0) {
-                // Tüm linkleri (URL'leri) bio metninden tamamen temizle
+                // Kapsamlı Bio Ayrıştırma (Backend-side)
                 const urlRegex = /https?:\/\/[^\s\)\>\]\"\<]+/g;
-                let cleanBilgi = fullBio
-                    .replace(urlRegex, '')
-                    .replace(/[\*`|]/g, "")
-                    .trim()
-                    .replace(/\n/g, "<br>");
+                let lines = fullBio.split('\n');
+                let formattedLines = lines.map(line => {
+                    let text = line.trim()
+                        .replace(urlRegex, '') // Linkleri sil
+                        .replace(/[\\*_~`|]/g, "") // Markdown sembollerini sil
+                        .replace(/[\u200b\u200c\u200d\u180e\ufeff]/g, "") // Gizli Unicode sil
+                        .replace(/^>\s+/gm, ""); // Quote sil
+                    
+                    if (!text) return "";
+
+                    // İlk iki nokta üst üsteyi bul
+                    const colonIndex = text.indexOf(':');
+                    if (colonIndex > 0 && colonIndex < 25) {
+                        const key = text.substring(0, colonIndex + 1);
+                        const value = text.substring(colonIndex + 1);
+                        
+                        // Key kontrolü: Cümle bitiş işareti içermemeli ve maks 3 kelime olmalı
+                        const keyTrimmed = key.trim();
+                        if (!/[.!?]/.test(keyTrimmed) && keyTrimmed.split(/\s+/).length <= 3) {
+                            return `<span class="bio-key">${key}</span>${value}`;
+                        }
+                    }
+                    return text;
+                });
+
+                let cleanBilgi = formattedLines
+                    .filter(l => l !== "") // Boş satırları at
+                    .join('<br>') // Satırları birleştir
+                    .replace(/(<br>){3,}/g, "<br><br>"); // 3+ boşluğu 2'ye indir
 
                 memberList.push({
                     isim: thread.name.toUpperCase(),
