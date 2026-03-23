@@ -13,6 +13,7 @@ const MEMORIAL_CHANNEL_ID = '1283455369212858473';
 const GALLERY_CHANNEL_ID = '1485411952137076746';
 const PATCHES_CHANNEL_ID = '1485409905765781555';
 const KULTUR_CHANNEL_ID = '1259277964294623332';
+const MAP_FORUM_CHANNEL_ID = '1283170980315005048'; // Örn: Forum Kanal ID'si buraya gelecek
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'bot_data.json');
 
@@ -29,8 +30,71 @@ let cache = {
     memorial: { data: null, lastRefresh: null },
     gallery: { data: null, lastRefresh: null },
     patches: { data: null, lastRefresh: null },
-    kultur: { data: null, lastRefresh: null }
+    kultur: { data: null, lastRefresh: null },
+    mapData: { data: null, lastRefresh: null }
 };
+
+async function fetchMapData() {
+    console.log(`--- Harita Forum Taraması Başlatıldı [${new Date().toLocaleTimeString()}] ---`);
+    try {
+        const channel = await client.channels.fetch(MAP_FORUM_CHANNEL_ID);
+        if (!channel) return { error: "Forum kanalı bulunamadı" };
+
+        const fetchedThreads = await channel.threads.fetchActive();
+        const threads = Array.from(fetchedThreads.threads.values());
+        
+        const result = {};
+
+        for (const thread of threads) {
+            const countryKey = thread.name.toUpperCase();
+            const messages = await thread.messages.fetch({ limit: 100 });
+            const states = {};
+            let currentState = "GENERAL"; // Default state if none defined
+
+            // Sort messages to keep the flow (Oldest first)
+            const sortedMsgs = Array.from(messages.values()).reverse();
+
+            sortedMsgs.forEach(msg => {
+                const content = msg.content.trim();
+
+                // 1. Detect State Header: ### STATE NAME
+                const stateMatch = content.match(/^###\s+([^\n]+)/);
+                if (stateMatch) {
+                    currentState = stateMatch[1].trim().toUpperCase();
+                    if (!states[currentState]) states[currentState] = [];
+                    return;
+                }
+
+                // 2. Detect City Header: ## CITY NAME
+                const cityMatch = content.match(/^##\s+([^\n]+)/);
+                if (cityMatch) {
+                    let cityName = cityMatch[1].trim();
+                    const isNew = cityName.includes(':SSMCNEW:');
+                    cityName = cityName.replace(':SSMCNEW:', '').trim();
+
+                    const description = content.replace(cityMatch[0], '').trim().replace(/\n/g, '<br>');
+                    const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
+
+                    if (!states[currentState]) states[currentState] = [];
+                    
+                    states[currentState].push({
+                        slug: cityName.toLowerCase().replace(/\s+/g, '_'),
+                        title: cityName,
+                        content: description,
+                        image: image,
+                        isNew: isNew
+                    });
+                }
+            });
+
+            if (Object.keys(states).length > 0) result[countryKey] = states;
+        }
+        return result;
+    } catch (e) {
+        console.error("Harita verisi çekme hatası:", e);
+        return { error: e.message };
+    }
+}
 
 async function fetchFromChannel(channelId) {
     console.log(`--- Tarama Başlatıldı [${channelId}] [${new Date().toLocaleTimeString()}] ---`);
@@ -98,7 +162,7 @@ async function fetchFromChannel(channelId) {
 
                 memberList.push({
                     isim: thread.name.toUpperCase(),
-                    rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : (channelId === MEMORIAL_CHANNEL_ID ? "ANI" : (channelId === GALLERY_CHANNEL_ID ? "GALERİ" : "YAMA")),
+                    rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : (channelId === MEMORIAL_CHANNEL_ID ? "ANI" : (channelId === GALLERY_CHANNEL_ID ? "GALERİ" : (channelId === KULTUR_CHANNEL_ID ? "KÜLTÜR" : "YAMA"))),
                     gorsel: allImages[0] || "",
                     gorseller: allImages,
                     bilgi: cleanBilgi
@@ -116,18 +180,20 @@ async function fetchFromChannel(channelId) {
 async function bulkRefresh() {
     console.log("--- Toplu Veri Çekme İşlemi Başlatıldı ---");
     try {
-        const [members, memorial, gallery, patches, kultur] = await Promise.all([
+        const [members, memorial, gallery, patches, kultur, mapData] = await Promise.all([
             fetchFromChannel(MEMBERS_CHANNEL_ID),
             fetchFromChannel(MEMORIAL_CHANNEL_ID),
             fetchFromChannel(GALLERY_CHANNEL_ID),
             fetchFromChannel(PATCHES_CHANNEL_ID),
-            fetchFromChannel(KULTUR_CHANNEL_ID)
+            fetchFromChannel(KULTUR_CHANNEL_ID),
+            fetchMapData()
         ]);
         cache.members.data = members;
         cache.memorial.data = memorial;
         cache.gallery.data = gallery;
         cache.patches.data = patches;
         cache.kultur.data = kultur;
+        cache.mapData.data = mapData;
         
         // Diske Kaydet
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
@@ -149,6 +215,7 @@ function loadInitialData() {
             cache.gallery.data = parsed.gallery?.data || null;
             cache.patches.data = parsed.patches?.data || null;
             cache.kultur.data = parsed.kultur?.data || null;
+            cache.mapData.data = parsed.mapData?.data || null;
             console.log("--- Başlangıç Verileri Diskten Yüklendi ---");
         } catch (e) {
             console.error("Diskten veri yükleme hatası:", e);
@@ -162,6 +229,7 @@ app.get('/api/memoryof', (req, res) => res.json(cache.memorial.data || { members
 app.get('/api/gallery', (req, res) => res.json(cache.gallery.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/patches', (req, res) => res.json(cache.patches.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/mc-kultur', (req, res) => res.json(cache.kultur.data || { members: [], error: "Henüz veri yüklenmedi" }));
+app.get('/api/map-data', (req, res) => res.json(cache.mapData.data || { error: "Henüz veri yüklenmedi" }));
 
 app.get('/api/refresh', async (req, res) => {
     const success = await bulkRefresh();
