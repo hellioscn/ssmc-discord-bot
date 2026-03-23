@@ -28,7 +28,7 @@ const client = new Client({
 // --- NORMALIZATION HELPER ---
 const normalizeCountry = (name) => {
     if (!name) return "USA";
-    const n = name.toUpperCase().replace(/[#.]/g, '').trim(); 
+    const n = name.toUpperCase().replace(/[#.]/g, '').trim();
     if (n === "TURKIYE" || n === "TURKEY" || n === "TR") return "TURKIYE";
     if (n === "USA" || n === "ABD" || n === "US") return "USA";
     if (n === "GERMANY" || n === "ALMANYA" || n === "GER") return "GERMANY";
@@ -53,152 +53,95 @@ async function fetchMapData() {
 
         const result = {};
 
-        // 1. ÖNCE THREADS (FORUM VEYA BAŞLIKLI KANAL) DENE
-        const fetchedThreads = await channel.threads?.fetchActive().catch(() => null);
-        const threads = fetchedThreads ? Array.from(fetchedThreads.threads.values()) : [];
+        const fetchedActive = await channel.threads?.fetchActive().catch(() => null);
+        const fetchedArchived = await channel.threads?.fetchArchived({ type: 'public' }).catch(() => null);
 
-        if (threads.length > 0) {
-            console.log(`${threads.length} adet başlık (thread) bulundu.`);
-            for (const thread of threads) {
-                const countryKey = normalizeCountry(thread.name);
-                const messages = await thread.messages.fetch({ limit: 100 });
-                result[countryKey] = parseMapMessages(messages);
-            }
-        } 
+        const allThreads = [
+            ...(fetchedActive?.threads ? Array.from(fetchedActive.threads.values()) : []),
+            ...(fetchedArchived?.threads ? Array.from(fetchedArchived.threads.values()) : [])
+        ];
 
-        // 2. THREADS YOKSA TÜM KANALI TARA (TEK KANAL DÜZENİ)
-        if (Object.keys(result).length === 0) {
-            console.log("Threads bulunamadı veya boş. Tek kanal mesaj modu deneniyor...");
-            const messages = await channel.messages.fetch({ limit: 100 });
-            let currentCountry = "GENERAL";
-            let currentState = "GENERAL";
+        console.log(`${allThreads.length} adet ülke thread'i bulundu.`);
 
+        for (const countryThread of allThreads) {
+            const countryKey = normalizeCountry(countryThread.name);
+            const messages = await countryThread.messages.fetch({ limit: 100 });
             const sortedMsgs = Array.from(messages.values()).reverse();
-            sortedMsgs.forEach(msg => {
-                const content = msg.content.trim();
 
-                // # ÜLKE
-                const countryMatch = content.match(/^#\s+([^\n]+)/);
-                if (countryMatch) {
-                    currentCountry = normalizeCountry(countryMatch[1]);
-                    if (!result[currentCountry]) result[currentCountry] = {};
-                    currentState = "GENERAL";
-                    return;
-                }
+            const cities = [];
 
-                // ## EYALET/STATE
-                const stateMatch = content.match(/^##\s+([^\n]+)/);
-                if (stateMatch) {
-                    currentState = stateMatch[1].trim().toUpperCase();
-                    if (!result[currentCountry]) result[currentCountry] = {};
-                    if (!result[currentCountry][currentState]) result[currentCountry][currentState] = [];
-                    return;
-                }
+            for (const msg of sortedMsgs) {
+                const content = msg.content?.trim();
+                if (!content || content.length < 2) continue;
 
-                // ### ŞEHİR/CITY or **CITY**
-                const cityMatch = content.match(/^(?:###|\*\*)\s*([^\*\n]+)/);
-                if (cityMatch) {
-                    let cityName = cityMatch[1].trim();
-                    const isNew = cityName.includes(':SSMCNEW:');
-                    cityName = cityName.replace(':SSMCNEW:', '').trim();
+                // KEY=VALUE FORMAT PARSER
+                // Desteklenen formatlar:
+                // Eyalet=Arizona  veya  eyalet=arizona
+                // Şehir=Phoenix  veya  sehir=phoenix
+                // bilgi=Açıklama metni...
+                // :SSMCNEW: → yeni kayıt işareti
 
-                    const description = content.replace(cityMatch[0], '').replace(/\*\*/g, '').trim().replace(/\n/g, '<br>');
-                    const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
+                const lines = content.split('\n');
+                let currentState = null;
+                let currentCity = null;
+                let currentBilgi = [];
+                const image = msg.attachments.first()?.url || '';
 
-                    if (!result[currentCountry]) result[currentCountry] = {};
-                    if (!result[currentCountry][currentState]) result[currentCountry][currentState] = [];
-                    
-                    result[currentCountry][currentState].push({
+                const saveCity = () => {
+                    if (!currentCity) return;
+                    const isNew = currentCity.includes(':SSMCNEW:');
+                    const cityName = currentCity.replace(/:SSMCNEW:/g, '').trim();
+                    if (cityName.length < 2) return;
+                    cities.push({
                         slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
                         title: cityName,
-                        content: description,
+                        state: currentState || '',
+                        content: currentBilgi.join('<br>').trim(),
                         image: image,
                         isNew: isNew
                     });
+                    currentCity = null;
+                    currentBilgi = [];
+                };
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+
+                    // Check for key=value pairs (case+accent insensitive)
+                    const kvMatch = trimmed.match(/^(eyalet|şehir|sehir|city|state|bilgi|info)\s*=\s*(.+)$/i);
+                    if (kvMatch) {
+                        const key = kvMatch[1].toLowerCase();
+                        const value = kvMatch[2].trim();
+
+                        if (key === 'eyalet' || key === 'state') {
+                            currentState = value.toUpperCase();
+                        } else if (key === 'şehir' || key === 'sehir' || key === 'city') {
+                            saveCity(); // Save previous
+                            currentCity = value;
+                            currentBilgi = [];
+                        } else if (key === 'bilgi' || key === 'info') {
+                            currentBilgi.push(value);
+                        }
+                    } else if (currentCity) {
+                        // Continuation of bilgi (multi-line descriptions)
+                        currentBilgi.push(trimmed);
+                    }
                 }
-            });
+                saveCity(); // Save last city in message
+            }
+
+            if (cities.length > 0) {
+                result[countryKey] = cities;
+            }
         }
 
-        // Filter: remove states with no cities, then remove countries with no states
-        for (const country in result) {
-            for (const state in result[country]) {
-                if (!result[country][state] || result[country][state].length === 0) {
-                    delete result[country][state];
-                }
-            }
-            if (Object.keys(result[country]).length === 0) {
-                delete result[country];
-            }
-        }
-
+        console.log("Harita verisi hazır:", JSON.stringify(Object.keys(result)));
         return result;
     } catch (e) {
         console.error("Harita verisi çekme hatası:", e);
         return { error: e.message };
     }
-}
-
-function parseMapMessages(messages) {
-    const states = {};
-    let currentState = "GENERAL";
-    const sortedMsgs = Array.from(messages.values()).reverse();
-
-    sortedMsgs.forEach(msg => {
-        const content = msg.content.trim();
-        
-        // ## EYALET/STATE header
-        const stateMatch = content.match(/^##\s+([^\n]+)/);
-        if (stateMatch) {
-            currentState = stateMatch[1].trim().toUpperCase();
-            if (!states[currentState]) states[currentState] = [];
-            return;
-        }
-
-        // GLOBAL SCAN: extract ALL **CityName** or ### CityName entries from a single message
-        // This handles the user's format where all cities are in one message
-        const boldCityRegex = /\*\*([^\*]+)\*\*/g;
-        const mdCityRegex = /^###\s+(.+)$/gm;
-        
-        let matched = false;
-        let match;
-        
-        // Check for ### format (multi-line)
-        while ((match = mdCityRegex.exec(content)) !== null) {
-            let cityName = match[1].trim();
-            const isNew = cityName.includes(':SSMCNEW:');
-            cityName = cityName.replace(':SSMCNEW:', '').trim();
-            const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
-            if (!states[currentState]) states[currentState] = [];
-            states[currentState].push({
-                slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
-                title: cityName,
-                content: '',
-                image: image,
-                isNew: isNew
-            });
-            matched = true;
-        }
-        
-        // Check for **bold** format (all on same or separate lines)
-        if (!matched) {
-            while ((match = boldCityRegex.exec(content)) !== null) {
-                let cityName = match[1].trim();
-                if (!cityName || cityName.length < 2) continue;
-                const isNew = cityName.includes(':SSMCNEW:');
-                cityName = cityName.replace(':SSMCNEW:', '').trim();
-                const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
-                if (!states[currentState]) states[currentState] = [];
-                states[currentState].push({
-                    slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
-                    title: cityName,
-                    content: '',
-                    image: image,
-                    isNew: isNew
-                });
-            }
-        }
-    });
-    return states;
 }
 
 async function fetchFromChannel(channelId) {
