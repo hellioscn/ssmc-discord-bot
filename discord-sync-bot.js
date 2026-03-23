@@ -93,8 +93,11 @@ async function fetchMapData() {
             };
 
             for (const msg of sortedMsgs) {
-                const content = msg.content?.trim();
-                if (!content || content.length < 2) continue;
+                const content = msg.content?.trim() || '';
+                const hasAttachment = msg.attachments.size > 0;
+                
+                // Skip completely empty messages
+                if (content.length < 2 && !hasAttachment) continue;
 
                 const lines = content.split('\n');
 
@@ -108,6 +111,7 @@ async function fetchMapData() {
                         const value = kvMatch[2].trim();
 
                         if (key === 'eyalet' || key === 'state') {
+                            saveCity(); // Save previous city before changing state!
                             currentState = value.toUpperCase();
                         } else if (key === 'şehir' || key === 'sehir' || key === 'city') {
                             saveCity(); // Save previous city before starting new one
