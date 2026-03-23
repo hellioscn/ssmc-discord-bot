@@ -13,7 +13,7 @@ const MEMORIAL_CHANNEL_ID = '1283455369212858473';
 const GALLERY_CHANNEL_ID = '1485411952137076746';
 const PATCHES_CHANNEL_ID = '1485409905765781555';
 const KULTUR_CHANNEL_ID = '1259277964294623332';
-const MAP_FORUM_CHANNEL_ID = '1283170980315005048'; // Örn: Forum Kanal ID'si buraya gelecek
+const MAP_FORUM_CHANNEL_ID = '1485447522720940123'; // Örn: Forum Kanal ID'si buraya gelecek
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'bot_data.json');
 
