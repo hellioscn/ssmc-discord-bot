@@ -69,46 +69,39 @@ async function fetchMapData() {
             const sortedMsgs = Array.from(messages.values()).reverse();
 
             const cities = [];
+            let currentState = '';   // Persists until new Eyalet=
+            let currentCity = null;  // Persists until new Şehir=
+            let currentBilgi = [];   // Persists until new Şehir=
+            let currentImage = '';
+
+            const saveCity = () => {
+                if (!currentCity) return;
+                const isNew = currentCity.includes(':SSMCNEW:');
+                const cityName = currentCity.replace(/:SSMCNEW:/g, '').trim();
+                if (cityName.length < 2) return;
+                cities.push({
+                    slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
+                    title: cityName,
+                    state: currentState,
+                    content: currentBilgi.join('<br>').trim(),
+                    image: currentImage,
+                    isNew: isNew
+                });
+                currentCity = null;
+                currentBilgi = [];
+                currentImage = '';
+            };
 
             for (const msg of sortedMsgs) {
                 const content = msg.content?.trim();
                 if (!content || content.length < 2) continue;
 
-                // KEY=VALUE FORMAT PARSER
-                // Desteklenen formatlar:
-                // Eyalet=Arizona  veya  eyalet=arizona
-                // Şehir=Phoenix  veya  sehir=phoenix
-                // bilgi=Açıklama metni...
-                // :SSMCNEW: → yeni kayıt işareti
-
                 const lines = content.split('\n');
-                let currentState = null;
-                let currentCity = null;
-                let currentBilgi = [];
-                const image = msg.attachments.first()?.url || '';
-
-                const saveCity = () => {
-                    if (!currentCity) return;
-                    const isNew = currentCity.includes(':SSMCNEW:');
-                    const cityName = currentCity.replace(/:SSMCNEW:/g, '').trim();
-                    if (cityName.length < 2) return;
-                    cities.push({
-                        slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
-                        title: cityName,
-                        state: currentState || '',
-                        content: currentBilgi.join('<br>').trim(),
-                        image: image,
-                        isNew: isNew
-                    });
-                    currentCity = null;
-                    currentBilgi = [];
-                };
 
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (!trimmed) continue;
 
-                    // Check for key=value pairs (case+accent insensitive)
                     const kvMatch = trimmed.match(/^(eyalet|şehir|sehir|city|state|bilgi|info)\s*=\s*(.+)$/i);
                     if (kvMatch) {
                         const key = kvMatch[1].toLowerCase();
@@ -117,19 +110,25 @@ async function fetchMapData() {
                         if (key === 'eyalet' || key === 'state') {
                             currentState = value.toUpperCase();
                         } else if (key === 'şehir' || key === 'sehir' || key === 'city') {
-                            saveCity(); // Save previous
+                            saveCity(); // Save previous city before starting new one
                             currentCity = value;
                             currentBilgi = [];
+                            currentImage = msg.attachments.first()?.url || '';
                         } else if (key === 'bilgi' || key === 'info') {
                             currentBilgi.push(value);
                         }
                     } else if (currentCity) {
-                        // Continuation of bilgi (multi-line descriptions)
+                        // Free text after Şehir= also appends to bilgi
                         currentBilgi.push(trimmed);
                     }
                 }
-                saveCity(); // Save last city in message
+
+                // If this message has an attachment and we have an active city, use it
+                if (currentCity && !currentImage && msg.attachments.first()) {
+                    currentImage = msg.attachments.first().url;
+                }
             }
+            saveCity(); // Save the last city after all messages
 
             if (cities.length > 0) {
                 result[countryKey] = cities;
