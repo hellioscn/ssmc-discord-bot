@@ -304,10 +304,14 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
-    loadInitialData();
+    loadInitialData(); // Önce diskten yükle (hız için)
+    await bulkRefresh(); // Başlangıçta hemen bir kez tazele
+    
+    // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
     setInterval(bulkRefresh, 86400000);
+    console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
 });
 
 client.login(TOKEN);
