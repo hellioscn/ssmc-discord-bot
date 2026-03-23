@@ -13,7 +13,7 @@ const MEMORIAL_CHANNEL_ID = '1283455369212858473';
 const GALLERY_CHANNEL_ID = '1485411952137076746';
 const PATCHES_CHANNEL_ID = '1485409905765781555';
 const KULTUR_CHANNEL_ID = '1259277964294623332';
-const MAP_FORUM_CHANNEL_ID = '1485447522720940123'; // Örn: Forum Kanal ID'si buraya gelecek
+const MAP_FORUM_CHANNEL_ID = '1485447522720940123';
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'bot_data.json');
 
@@ -155,74 +155,38 @@ async function fetchFromChannel(channelId) {
         const channel = await client.channels.fetch(channelId);
         if (!channel) return { members: [], error: "Kanal bulunamadı" };
 
-        const active = await channel.threads.fetchActive().catch(() => ({ threads: new Map() }));
-        const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(() => ({ threads: new Map() }));
+        const fetchedActive = await channel.threads?.fetchActive().catch(() => null);
+        const fetchedArchived = await channel.threads?.fetchArchived({ type: 'public' }).catch(() => null);
 
         const allThreads = [
-            ...(active.threads ? Array.from(active.threads.values()) : []),
-            ...(archived.threads ? Array.from(archived.threads.values()) : [])
+            ...(fetchedActive?.threads ? Array.from(fetchedActive.threads.values()) : []),
+            ...(fetchedArchived?.threads ? Array.from(fetchedArchived.threads.values()) : [])
         ];
 
         const memberList = [];
-        for (const thread of allThreads) {
-            const messages = await thread.messages.fetch({ limit: 50 }).catch(() => new Map());
 
-            let allImages = [];
-            let fullBio = "";
-            const sortedMsgs = Array.from(messages.values()).reverse();
-
-            sortedMsgs.forEach(msg => {
-                if (msg.attachments.size > 0) {
-                    allImages.push(...msg.attachments.map(a => a.url));
-                }
-                if (msg.content && msg.content.trim().length > 0) {
-                    fullBio += msg.content + "\n\n";
-                }
-            });
-
-            if (allImages.length > 0 || fullBio.length > 0) {
-                // Kapsamlı Bio Ayrıştırma (Backend-side)
-                const urlRegex = /https?:\/\/[^\s\)\>\]\"\<]+/g;
-                let lines = fullBio.split('\n');
-                let formattedLines = lines.map(line => {
-                    let text = line.trim()
-                        .replace(urlRegex, '') // Linkleri sil
-                        .replace(/[\\*_~`|]/g, "") // Markdown sembollerini sil
-                        .replace(/[\u200b\u200c\u200d\u180e\ufeff]/g, "") // Gizli Unicode sil
-                        .replace(/^>\s+/gm, ""); // Quote sil
-
-                    if (!text) return "";
-
-                    // İlk iki nokta üst üsteyi bul
-                    const colonIndex = text.indexOf(':');
-                    if (colonIndex > 0 && colonIndex < 25) {
-                        const key = text.substring(0, colonIndex + 1);
-                        const value = text.substring(colonIndex + 1);
-
-                        // Key kontrolü: Cümle bitiş işareti içermemeli ve maks 3 kelime olmalı
-                        const keyTrimmed = key.trim();
-                        if (!/[.!?]/.test(keyTrimmed) && keyTrimmed.split(/\s+/).length <= 3) {
-                            return `<span class="bio-key">${key}</span>${value}`;
-                        }
-                    }
-                    return text;
-                });
-
-                let cleanBilgi = formattedLines
-                    .filter(l => l !== "") // Boş satırları at
-                    .join('<br>') // Satırları birleştir
-                    .replace(/(<br>){3,}/g, "<br><br>"); // 3+ boşluğu 2'ye indir
-
-                memberList.push({
-                    isim: thread.name.toUpperCase(),
-                    rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : (channelId === MEMORIAL_CHANNEL_ID ? "ANI" : (channelId === GALLERY_CHANNEL_ID ? "GALERİ" : (channelId === KULTUR_CHANNEL_ID ? "KÜLTÜR" : "YAMA"))),
-                    gorsel: allImages[0] || "",
-                    gorseller: allImages,
-                    bilgi: cleanBilgi
-                });
+        // MOD 1: THREADS VARSA (Üye Düzeni)
+        if (allThreads.length > 0) {
+            for (const thread of allThreads) {
+                const messages = await thread.messages.fetch({ limit: 50 }).catch(() => new Map());
+                const msgsArr = Array.from(messages.values()).reverse();
+                const data = parseMemberMessages(msgsArr, thread.name, channelId);
+                if (data) memberList.push(data);
             }
+        } 
+        
+        // MOD 2: THREADS YOKSA (MESAJ DÜZENİ)
+        if (memberList.length === 0) {
+            console.log(`Kanal [${channelId}] içinde thread bulunamadı. Mesaj modu deneniyor...`);
+            const messages = await channel.messages.fetch({ limit: 100 }).catch(() => new Map());
+            const sortedMsgs = Array.from(messages.values()).reverse();
+            
+            sortedMsgs.forEach(msg => {
+                const data = parseMemberMessages([msg], msg.author.username, channelId);
+                if (data) memberList.push(data);
+            });
         }
-
+        
         return { members: memberList, lastRefresh: new Date().toLocaleString('tr-TR') };
     } catch (err) {
         console.error(`Error [${channelId}]:`, err);
@@ -230,17 +194,59 @@ async function fetchFromChannel(channelId) {
     }
 }
 
+function parseMemberMessages(msgs, defaultName, channelId) {
+    let allImages = [];
+    let fullBio = "";
+    
+    msgs.forEach(msg => {
+        if (msg.attachments.size > 0) allImages.push(...msg.attachments.map(a => a.url));
+        if (msg.content && msg.content.trim().length > 0) fullBio += msg.content + "\n\n";
+    });
+
+    if (allImages.length === 0 && fullBio.length === 0) return null;
+
+    const urlRegex = /https?:\/\/[^\s\)\>\]\"\<]+/g;
+    let formattedLines = fullBio.split('\n').map(line => {
+        let text = line.trim().replace(urlRegex, '').replace(/[\\*_~`|]/g, "").replace(/[\u200b\u200c\u200d\u180e\ufeff]/g, "").replace(/^>\s+/gm, "");
+        if (!text) return "";
+        const colonIndex = text.indexOf(':');
+        if (colonIndex > 0 && colonIndex < 25) {
+            const key = text.substring(0, colonIndex + 1);
+            const value = text.substring(colonIndex + 1);
+            if (!/[.!?]/.test(key.trim()) && key.trim().split(/\s+/).length <= 3) {
+                return `<span class="bio-key">${key}</span>${value}`;
+            }
+        }
+        return text;
+    });
+
+    let cleanBilgi = formattedLines.filter(l => l !== "").join('<br>').replace(/(<br>){3,}/g, "<br><br>");
+
+    return {
+        isim: defaultName.toUpperCase(),
+        rol: channelId === MEMBERS_CHANNEL_ID ? "ÜYE" : (channelId === MEMORIAL_CHANNEL_ID ? "ANI" : (channelId === GALLERY_CHANNEL_ID ? "GALERİ" : (channelId === KULTUR_CHANNEL_ID ? "KÜLTÜR" : "YAMA"))),
+        gorsel: allImages[0] || "",
+        gorseller: allImages,
+        bilgi: cleanBilgi
+    };
+}
+
 async function bulkRefresh() {
-    console.log("--- Toplu Veri Çekme İşlemi Başlatıldı ---");
+    console.log("--- TOPLU VERİ ÇEKME BAŞLADI ---");
     try {
-        const [members, memorial, gallery, patches, kultur, mapData] = await Promise.all([
-            fetchFromChannel(MEMBERS_CHANNEL_ID),
-            fetchFromChannel(MEMORIAL_CHANNEL_ID),
-            fetchFromChannel(GALLERY_CHANNEL_ID),
-            fetchFromChannel(PATCHES_CHANNEL_ID),
-            fetchFromChannel(KULTUR_CHANNEL_ID),
-            fetchMapData()
-        ]);
+        console.log("Fetching: Members...");
+        const members = await fetchFromChannel(MEMBERS_CHANNEL_ID);
+        console.log("Fetching: Memorial...");
+        const memorial = await fetchFromChannel(MEMORIAL_CHANNEL_ID);
+        console.log("Fetching: Gallery...");
+        const gallery = await fetchFromChannel(GALLERY_CHANNEL_ID);
+        console.log("Fetching: Patches...");
+        const patches = await fetchFromChannel(PATCHES_CHANNEL_ID);
+        console.log("Fetching: Kultur...");
+        const kultur = await fetchFromChannel(KULTUR_CHANNEL_ID);
+        console.log("Fetching: Map Data...");
+        const mapData = await fetchMapData();
+
         cache.members.data = members;
         cache.memorial.data = memorial;
         cache.gallery.data = gallery;
@@ -248,12 +254,11 @@ async function bulkRefresh() {
         cache.kultur.data = kultur;
         cache.mapData.data = mapData;
 
-        // Diske Kaydet
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
-        console.log("--- Veriler Diske Kaydedildi ve Önbelleklendi ---");
+        console.log("--- TÜM VERİLER BAŞARIYLA YENİLENDİ VE KAYDEDİLDİ ---");
         return true;
     } catch (err) {
-        console.error("Bulk Refresh Error:", err);
+        console.error("KRİTİK HATA (bulkRefresh):", err);
         return false;
     }
 }
@@ -276,7 +281,6 @@ function loadInitialData() {
     }
 }
 
-// REST API — Sadece Cache'den döner (Hızlı ve Stabil)
 app.get('/api/members', (req, res) => res.json(cache.members.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/memoryof', (req, res) => res.json(cache.memorial.data || { members: [], error: "Henüz veri yüklenmedi" }));
 app.get('/api/gallery', (req, res) => res.json(cache.gallery.data || { members: [], error: "Henüz veri yüklenmedi" }));
@@ -290,7 +294,6 @@ app.get('/api/refresh', async (req, res) => {
     else res.status(500).json({ error: "Yenileme hatası" });
 });
 
-// Discord Komutları
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (message.content === '!bot-refresh') {
@@ -303,11 +306,8 @@ client.on('messageCreate', async (message) => {
 
 client.once('ready', () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
-    loadInitialData(); // Önce diskten yükle (hız için)
-
-    // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
+    loadInitialData();
     setInterval(bulkRefresh, 86400000);
-    console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
 });
 
 client.login(TOKEN);
