@@ -74,7 +74,7 @@ async function fetchMapData() {
             let currentCountry = 'USA';
             let currentState = 'GENERAL';
             let currentBilgi = [];
-            let currentImage = '';
+            let currentImages = [];
 
             for (const msg of sortedMsgs) {
                 const content = msg.content?.trim() || '';
@@ -104,15 +104,13 @@ async function fetchMapData() {
                         if (!trimmed.toLowerCase().startsWith('şehir=') && !trimmed.toLowerCase().startsWith('sehir=') && !trimmed.toLowerCase().startsWith('bilgi=')) {
                             currentBilgi.push(trimmed);
                         } else if (trimmed.toLowerCase().startsWith('bilgi=')) {
-                            // Sadece "bilgi=" prefixini atmak istersen diye (yazılırsa)
                             currentBilgi.push(trimmed.substring(6).trim());
                         }
                     }
                 }
 
-                // If this message has an attachment and we have no image yet, use it
-                if (!currentImage && msg.attachments.first()) {
-                    currentImage = msg.attachments.first().url;
+                if (hasAttachment) {
+                    msg.attachments.forEach(att => currentImages.push(att.url));
                 }
             }
 
@@ -126,7 +124,8 @@ async function fetchMapData() {
                 title: cityName,
                 state: currentState,
                 content: currentBilgi.join('<br>').trim(),
-                image: currentImage,
+                image: currentImages.length > 0 ? currentImages[0] : '',
+                images: currentImages,
                 isNew: isNew
             });
         }
