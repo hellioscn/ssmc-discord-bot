@@ -7,7 +7,7 @@ const path = require('path');
 const app = express();
 app.use(cors());
 
-const TOKEN = process.env.DISCORD_TOKEN; 
+const TOKEN = process.env.DISCORD_TOKEN;
 const MEMBERS_CHANNEL_ID = '1283170980315005048';
 const MEMORIAL_CHANNEL_ID = '1283455369212858473';
 const GALLERY_CHANNEL_ID = '1485411952137076746';
@@ -35,38 +35,57 @@ let cache = {
 };
 
 async function fetchMapData() {
-    console.log(`--- Harita Forum Taraması Başlatıldı [${new Date().toLocaleTimeString()}] ---`);
+    console.log(`--- Harita Veri Taraması Başlatıldı [${new Date().toLocaleTimeString()}] ---`);
     try {
         const channel = await client.channels.fetch(MAP_FORUM_CHANNEL_ID);
-        if (!channel) return { error: "Forum kanalı bulunamadı" };
+        if (!channel) return { error: "Kanal bulunamadı" };
 
-        const fetchedThreads = await channel.threads.fetchActive();
-        const threads = Array.from(fetchedThreads.threads.values());
-        
         const result = {};
 
-        for (const thread of threads) {
-            const countryKey = thread.name.toUpperCase();
-            const messages = await thread.messages.fetch({ limit: 100 });
-            const states = {};
-            let currentState = "GENERAL"; // Default state if none defined
+        // 1. ÖNCE THREADS (FORUM VEYA BAŞLIKLI KANAL) DENE
+        const fetchedThreads = await channel.threads?.fetchActive().catch(() => null);
+        const threads = fetchedThreads ? Array.from(fetchedThreads.threads.values()) : [];
 
-            // Sort messages to keep the flow (Oldest first)
+        if (threads.length > 0) {
+            console.log(`${threads.length} adet başlık (thread) bulundu.`);
+            for (const thread of threads) {
+                const countryKey = thread.name.toUpperCase();
+                const messages = await thread.messages.fetch({ limit: 100 });
+                result[countryKey] = parseMapMessages(messages);
+            }
+        } 
+        
+        // 2. THREADS YOKSA TÜM KANALI TARA (TEK KANAL DÜZENİ)
+        if (Object.keys(result).length === 0) {
+            console.log("Threads bulunamadı veya boş. Tek kanal mesaj modu deneniyor...");
+            const messages = await channel.messages.fetch({ limit: 100 });
+            let currentCountry = "GENERAL";
+            let currentState = "GENERAL";
+            
             const sortedMsgs = Array.from(messages.values()).reverse();
-
             sortedMsgs.forEach(msg => {
                 const content = msg.content.trim();
-
-                // 1. Detect State Header: ### STATE NAME
-                const stateMatch = content.match(/^###\s+([^\n]+)/);
-                if (stateMatch) {
-                    currentState = stateMatch[1].trim().toUpperCase();
-                    if (!states[currentState]) states[currentState] = [];
+                
+                // # ÜLKE
+                const countryMatch = content.match(/^#\s+([^\n]+)/);
+                if (countryMatch) {
+                    currentCountry = countryMatch[1].trim().toUpperCase();
+                    if (!result[currentCountry]) result[currentCountry] = {};
+                    currentState = "GENERAL";
                     return;
                 }
 
-                // 2. Detect City Header: ## CITY NAME
-                const cityMatch = content.match(/^##\s+([^\n]+)/);
+                // ## EYALET/STATE
+                const stateMatch = content.match(/^##\s+([^\n]+)/);
+                if (stateMatch) {
+                    currentState = stateMatch[1].trim().toUpperCase();
+                    if (!result[currentCountry]) result[currentCountry] = {};
+                    if (!result[currentCountry][currentState]) result[currentCountry][currentState] = [];
+                    return;
+                }
+
+                // ### ŞEHİR/CITY
+                const cityMatch = content.match(/^###\s+([^\n]+)/);
                 if (cityMatch) {
                     let cityName = cityMatch[1].trim();
                     const isNew = cityName.includes(':SSMCNEW:');
@@ -75,9 +94,10 @@ async function fetchMapData() {
                     const description = content.replace(cityMatch[0], '').trim().replace(/\n/g, '<br>');
                     const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
 
-                    if (!states[currentState]) states[currentState] = [];
+                    if (!result[currentCountry]) result[currentCountry] = {};
+                    if (!result[currentCountry][currentState]) result[currentCountry][currentState] = [];
                     
-                    states[currentState].push({
+                    result[currentCountry][currentState].push({
                         slug: cityName.toLowerCase().replace(/\s+/g, '_'),
                         title: cityName,
                         content: description,
@@ -86,14 +106,47 @@ async function fetchMapData() {
                     });
                 }
             });
-
-            if (Object.keys(states).length > 0) result[countryKey] = states;
         }
         return result;
     } catch (e) {
         console.error("Harita verisi çekme hatası:", e);
         return { error: e.message };
     }
+}
+
+function parseMapMessages(messages) {
+    const states = {};
+    let currentState = "GENERAL";
+    const sortedMsgs = Array.from(messages.values()).reverse();
+
+    sortedMsgs.forEach(msg => {
+        const content = msg.content.trim();
+        const stateMatch = content.match(/^##\s+([^\n]+)/);
+        if (stateMatch) {
+            currentState = stateMatch[1].trim().toUpperCase();
+            if (!states[currentState]) states[currentState] = [];
+            return;
+        }
+
+        const cityMatch = content.match(/^###\s+([^\n]+)/);
+        if (cityMatch) {
+            let cityName = cityMatch[1].trim();
+            const isNew = cityName.includes(':SSMCNEW:');
+            cityName = cityName.replace(':SSMCNEW:', '').trim();
+            const description = content.replace(cityMatch[0], '').trim().replace(/\n/g, '<br>');
+            const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
+
+            if (!states[currentState]) states[currentState] = [];
+            states[currentState].push({
+                slug: cityName.toLowerCase().replace(/\s+/g, '_'),
+                title: cityName,
+                content: description,
+                image: image,
+                isNew: isNew
+            });
+        }
+    });
+    return states;
 }
 
 async function fetchFromChannel(channelId) {
@@ -104,20 +157,20 @@ async function fetchFromChannel(channelId) {
 
         const active = await channel.threads.fetchActive().catch(() => ({ threads: new Map() }));
         const archived = await channel.threads.fetchArchived({ type: 'public' }).catch(() => ({ threads: new Map() }));
-        
+
         const allThreads = [
             ...(active.threads ? Array.from(active.threads.values()) : []),
             ...(archived.threads ? Array.from(archived.threads.values()) : [])
         ];
-        
+
         const memberList = [];
         for (const thread of allThreads) {
             const messages = await thread.messages.fetch({ limit: 50 }).catch(() => new Map());
-            
+
             let allImages = [];
             let fullBio = "";
             const sortedMsgs = Array.from(messages.values()).reverse();
-            
+
             sortedMsgs.forEach(msg => {
                 if (msg.attachments.size > 0) {
                     allImages.push(...msg.attachments.map(a => a.url));
@@ -137,7 +190,7 @@ async function fetchFromChannel(channelId) {
                         .replace(/[\\*_~`|]/g, "") // Markdown sembollerini sil
                         .replace(/[\u200b\u200c\u200d\u180e\ufeff]/g, "") // Gizli Unicode sil
                         .replace(/^>\s+/gm, ""); // Quote sil
-                    
+
                     if (!text) return "";
 
                     // İlk iki nokta üst üsteyi bul
@@ -145,7 +198,7 @@ async function fetchFromChannel(channelId) {
                     if (colonIndex > 0 && colonIndex < 25) {
                         const key = text.substring(0, colonIndex + 1);
                         const value = text.substring(colonIndex + 1);
-                        
+
                         // Key kontrolü: Cümle bitiş işareti içermemeli ve maks 3 kelime olmalı
                         const keyTrimmed = key.trim();
                         if (!/[.!?]/.test(keyTrimmed) && keyTrimmed.split(/\s+/).length <= 3) {
@@ -169,7 +222,7 @@ async function fetchFromChannel(channelId) {
                 });
             }
         }
-        
+
         return { members: memberList, lastRefresh: new Date().toLocaleString('tr-TR') };
     } catch (err) {
         console.error(`Error [${channelId}]:`, err);
@@ -194,7 +247,7 @@ async function bulkRefresh() {
         cache.patches.data = patches;
         cache.kultur.data = kultur;
         cache.mapData.data = mapData;
-        
+
         // Diske Kaydet
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
         console.log("--- Veriler Diske Kaydedildi ve Önbelleklendi ---");
@@ -251,7 +304,7 @@ client.on('messageCreate', async (message) => {
 client.once('ready', () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
     loadInitialData(); // Önce diskten yükle (hız için)
-    
+
     // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
     setInterval(bulkRefresh, 86400000);
     console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
