@@ -25,6 +25,17 @@ const client = new Client({
     ]
 });
 
+// --- NORMALIZATION HELPER ---
+const normalizeCountry = (name) => {
+    if (!name) return "USA";
+    const n = name.toUpperCase().replace(/[#.]/g, '').trim(); 
+    if (n === "TURKIYE" || n === "TURKEY" || n === "TR") return "TURKIYE";
+    if (n === "USA" || n === "ABD" || n === "US") return "USA";
+    if (n === "GERMANY" || n === "ALMANYA" || n === "GER") return "GERMANY";
+    if (n === "IRELAND" || n === "IRLANDA" || n === "IRE") return "IRELAND";
+    return n;
+};
+
 let cache = {
     members: { data: null, lastRefresh: null },
     memorial: { data: null, lastRefresh: null },
@@ -49,27 +60,27 @@ async function fetchMapData() {
         if (threads.length > 0) {
             console.log(`${threads.length} adet başlık (thread) bulundu.`);
             for (const thread of threads) {
-                const countryKey = thread.name.toUpperCase();
+                const countryKey = normalizeCountry(thread.name);
                 const messages = await thread.messages.fetch({ limit: 100 });
                 result[countryKey] = parseMapMessages(messages);
             }
         } 
-        
+
         // 2. THREADS YOKSA TÜM KANALI TARA (TEK KANAL DÜZENİ)
         if (Object.keys(result).length === 0) {
             console.log("Threads bulunamadı veya boş. Tek kanal mesaj modu deneniyor...");
             const messages = await channel.messages.fetch({ limit: 100 });
             let currentCountry = "GENERAL";
             let currentState = "GENERAL";
-            
+
             const sortedMsgs = Array.from(messages.values()).reverse();
             sortedMsgs.forEach(msg => {
                 const content = msg.content.trim();
-                
+
                 // # ÜLKE
                 const countryMatch = content.match(/^#\s+([^\n]+)/);
                 if (countryMatch) {
-                    currentCountry = countryMatch[1].trim().toUpperCase();
+                    currentCountry = normalizeCountry(countryMatch[1]);
                     if (!result[currentCountry]) result[currentCountry] = {};
                     currentState = "GENERAL";
                     return;
@@ -84,21 +95,21 @@ async function fetchMapData() {
                     return;
                 }
 
-                // ### ŞEHİR/CITY
-                const cityMatch = content.match(/^###\s+([^\n]+)/);
+                // ### ŞEHİR/CITY or **CITY**
+                const cityMatch = content.match(/^(?:###|\*\*)\s*([^\*\n]+)/);
                 if (cityMatch) {
                     let cityName = cityMatch[1].trim();
                     const isNew = cityName.includes(':SSMCNEW:');
                     cityName = cityName.replace(':SSMCNEW:', '').trim();
 
-                    const description = content.replace(cityMatch[0], '').trim().replace(/\n/g, '<br>');
+                    const description = content.replace(cityMatch[0], '').replace(/\*\*/g, '').trim().replace(/\n/g, '<br>');
                     const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
 
                     if (!result[currentCountry]) result[currentCountry] = {};
                     if (!result[currentCountry][currentState]) result[currentCountry][currentState] = [];
                     
                     result[currentCountry][currentState].push({
-                        slug: cityName.toLowerCase().replace(/\s+/g, '_'),
+                        slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
                         title: cityName,
                         content: description,
                         image: image,
@@ -121,6 +132,8 @@ function parseMapMessages(messages) {
 
     sortedMsgs.forEach(msg => {
         const content = msg.content.trim();
+        
+        // ## EYALET/STATE header
         const stateMatch = content.match(/^##\s+([^\n]+)/);
         if (stateMatch) {
             currentState = stateMatch[1].trim().toUpperCase();
@@ -128,22 +141,48 @@ function parseMapMessages(messages) {
             return;
         }
 
-        const cityMatch = content.match(/^###\s+([^\n]+)/);
-        if (cityMatch) {
-            let cityName = cityMatch[1].trim();
+        // GLOBAL SCAN: extract ALL **CityName** or ### CityName entries from a single message
+        // This handles the user's format where all cities are in one message
+        const boldCityRegex = /\*\*([^\*]+)\*\*/g;
+        const mdCityRegex = /^###\s+(.+)$/gm;
+        
+        let matched = false;
+        let match;
+        
+        // Check for ### format (multi-line)
+        while ((match = mdCityRegex.exec(content)) !== null) {
+            let cityName = match[1].trim();
             const isNew = cityName.includes(':SSMCNEW:');
             cityName = cityName.replace(':SSMCNEW:', '').trim();
-            const description = content.replace(cityMatch[0], '').trim().replace(/\n/g, '<br>');
             const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
-
             if (!states[currentState]) states[currentState] = [];
             states[currentState].push({
-                slug: cityName.toLowerCase().replace(/\s+/g, '_'),
+                slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
                 title: cityName,
-                content: description,
+                content: '',
                 image: image,
                 isNew: isNew
             });
+            matched = true;
+        }
+        
+        // Check for **bold** format (all on same or separate lines)
+        if (!matched) {
+            while ((match = boldCityRegex.exec(content)) !== null) {
+                let cityName = match[1].trim();
+                if (!cityName || cityName.length < 2) continue;
+                const isNew = cityName.includes(':SSMCNEW:');
+                cityName = cityName.replace(':SSMCNEW:', '').trim();
+                const image = msg.attachments.first()?.url || 'assets/images/placeholder.png';
+                if (!states[currentState]) states[currentState] = [];
+                states[currentState].push({
+                    slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
+                    title: cityName,
+                    content: '',
+                    image: image,
+                    isNew: isNew
+                });
+            }
         }
     });
     return states;
@@ -173,20 +212,20 @@ async function fetchFromChannel(channelId) {
                 const data = parseMemberMessages(msgsArr, thread.name, channelId);
                 if (data) memberList.push(data);
             }
-        } 
-        
+        }
+
         // MOD 2: THREADS YOKSA (MESAJ DÜZENİ)
         if (memberList.length === 0) {
             console.log(`Kanal [${channelId}] içinde thread bulunamadı. Mesaj modu deneniyor...`);
             const messages = await channel.messages.fetch({ limit: 100 }).catch(() => new Map());
             const sortedMsgs = Array.from(messages.values()).reverse();
-            
+
             sortedMsgs.forEach(msg => {
                 const data = parseMemberMessages([msg], msg.author.username, channelId);
                 if (data) memberList.push(data);
             });
         }
-        
+
         return { members: memberList, lastRefresh: new Date().toLocaleString('tr-TR') };
     } catch (err) {
         console.error(`Error [${channelId}]:`, err);
@@ -197,7 +236,7 @@ async function fetchFromChannel(channelId) {
 function parseMemberMessages(msgs, defaultName, channelId) {
     let allImages = [];
     let fullBio = "";
-    
+
     msgs.forEach(msg => {
         if (msg.attachments.size > 0) allImages.push(...msg.attachments.map(a => a.url));
         if (msg.content && msg.content.trim().length > 0) fullBio += msg.content + "\n\n";
@@ -308,7 +347,7 @@ client.once('ready', async () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
     loadInitialData(); // Önce diskten yükle (hız için)
     await bulkRefresh(); // Başlangıçta hemen bir kez tazele
-    
+
     // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
     setInterval(bulkRefresh, 86400000);
     console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
