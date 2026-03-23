@@ -118,6 +118,19 @@ async function fetchMapData() {
                 }
             });
         }
+
+        // Filter: remove states with no cities, then remove countries with no states
+        for (const country in result) {
+            for (const state in result[country]) {
+                if (!result[country][state] || result[country][state].length === 0) {
+                    delete result[country][state];
+                }
+            }
+            if (Object.keys(result[country]).length === 0) {
+                delete result[country];
+            }
+        }
+
         return result;
     } catch (e) {
         console.error("Harita verisi çekme hatası:", e);
