@@ -61,36 +61,20 @@ async function fetchMapData() {
             ...(fetchedArchived?.threads ? Array.from(fetchedArchived.threads.values()) : [])
         ];
 
-        console.log(`${allThreads.length} adet ülke thread'i bulundu.`);
+        console.log(`${allThreads.length} adet şehir/bölge thread'i bulundu.`);
 
-        for (const countryThread of allThreads) {
-            const countryKey = normalizeCountry(countryThread.name);
-            const messages = await countryThread.messages.fetch({ limit: 100 });
+        for (const cityThread of allThreads) {
+            const isNew = cityThread.name.includes(':SSMCNEW:');
+            const cityName = cityThread.name.replace(/:SSMCNEW:/g, '').trim();
+            if (cityName.length < 2) continue;
+
+            const messages = await cityThread.messages.fetch({ limit: 100 });
             const sortedMsgs = Array.from(messages.values()).reverse();
 
-            const cities = [];
-            let currentState = '';   // Persists until new Eyalet=
-            let currentCity = null;  // Persists until new Şehir=
-            let currentBilgi = [];   // Persists until new Şehir=
+            let currentCountry = 'USA';
+            let currentState = 'GENERAL';
+            let currentBilgi = [];
             let currentImage = '';
-
-            const saveCity = () => {
-                if (!currentCity) return;
-                const isNew = currentCity.includes(':SSMCNEW:');
-                const cityName = currentCity.replace(/:SSMCNEW:/g, '').trim();
-                if (cityName.length < 2) return;
-                cities.push({
-                    slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
-                    title: cityName,
-                    state: currentState,
-                    content: currentBilgi.join('<br>').trim(),
-                    image: currentImage,
-                    isNew: isNew
-                });
-                currentCity = null;
-                currentBilgi = [];
-                currentImage = '';
-            };
 
             for (const msg of sortedMsgs) {
                 const content = msg.content?.trim() || '';
@@ -105,38 +89,46 @@ async function fetchMapData() {
                     const trimmed = line.trim();
                     if (!trimmed) continue;
 
-                    const kvMatch = trimmed.match(/^(eyalet|şehir|sehir|city|state|bilgi|info)\s*=\s*(.+)$/i);
+                    const kvMatch = trimmed.match(/^(ülke|ulke|country|eyalet|state)\s*=\s*(.+)$/i);
                     if (kvMatch) {
                         const key = kvMatch[1].toLowerCase();
                         const value = kvMatch[2].trim();
 
-                        if (key === 'eyalet' || key === 'state') {
-                            saveCity(); // Save previous city before changing state!
+                        if (key === 'ülke' || key === 'ulke' || key === 'country') {
+                            currentCountry = value.toUpperCase();
+                        } else if (key === 'eyalet' || key === 'state') {
                             currentState = value.toUpperCase();
-                        } else if (key === 'şehir' || key === 'sehir' || key === 'city') {
-                            saveCity(); // Save previous city before starting new one
-                            currentCity = value;
-                            currentBilgi = [];
-                            currentImage = msg.attachments.first()?.url || '';
-                        } else if (key === 'bilgi' || key === 'info') {
-                            currentBilgi.push(value);
                         }
-                    } else if (currentCity) {
-                        // Free text after Şehir= also appends to bilgi
-                        currentBilgi.push(trimmed);
+                    } else {
+                        // Eğer Ülke= veya Eyalet= değilse ve geçmişten kalan Şehir= de değilse doğrudan bilgiye ekle
+                        if (!trimmed.toLowerCase().startsWith('şehir=') && !trimmed.toLowerCase().startsWith('sehir=') && !trimmed.toLowerCase().startsWith('bilgi=')) {
+                            currentBilgi.push(trimmed);
+                        } else if (trimmed.toLowerCase().startsWith('bilgi=')) {
+                            // Sadece "bilgi=" prefixini atmak istersen diye (yazılırsa)
+                            currentBilgi.push(trimmed.substring(6).trim());
+                        }
                     }
                 }
 
-                // If this message has an attachment and we have an active city, use it
-                if (currentCity && !currentImage && msg.attachments.first()) {
+                // If this message has an attachment and we have no image yet, use it
+                if (!currentImage && msg.attachments.first()) {
                     currentImage = msg.attachments.first().url;
                 }
             }
-            saveCity(); // Save the last city after all messages
 
-            if (cities.length > 0) {
-                result[countryKey] = cities;
+            const countryKey = normalizeCountry(currentCountry);
+            if (!result[countryKey]) {
+                result[countryKey] = [];
             }
+
+            result[countryKey].push({
+                slug: cityName.toLowerCase().replace(/\s+/g, '_').replace(/_chapter|_charter/g, ''),
+                title: cityName,
+                state: currentState,
+                content: currentBilgi.join('<br>').trim(),
+                image: currentImage,
+                isNew: isNew
+            });
         }
 
         console.log("Harita verisi hazır:", JSON.stringify(Object.keys(result)));
