@@ -298,9 +298,9 @@ client.once('ready', async () => {
     loadInitialData(); // Önce diskten yükle (hız için)
     await bulkRefresh(); // Başlangıçta hemen bir kez tazele
 
-    // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
-    setInterval(bulkRefresh, 86400000);
-    console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
+    // Haftada bir kez otomatik yenileme (7 gün = 604800000 ms)
+    setInterval(bulkRefresh, 604800000);
+    console.log("Haftalık otomatik yenileme zamanlayıcısı aktif.");
 });
 
 client.login(TOKEN);
