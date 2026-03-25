@@ -6,6 +6,7 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
+app.use(express.static(__dirname)); // Serve website files directly from the bot server
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const MEMBERS_CHANNEL_ID = '1283170980315005048';
@@ -176,6 +177,7 @@ async function fetchFromChannel(channelId) {
             });
         }
 
+        console.log(`Kanal [${channelId}] taraması tamamlandı. Toplam öğe: ${memberList.length}`);
         return { members: memberList, lastRefresh: new Date().toLocaleString('tr-TR') };
     } catch (err) {
         console.error(`Error [${channelId}]:`, err);
