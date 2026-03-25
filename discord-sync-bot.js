@@ -244,6 +244,12 @@ async function bulkRefresh() {
         cache.mapData.data = mapData;
 
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
+        
+        // --- WEB SYNC: Write to assets/data_sync.js for fallback ---
+        const syncFile = path.join(__dirname, 'assets', 'data_sync.js');
+        const syncContent = `window.SYNC_DATA = ${JSON.stringify(cache, null, 2)};\nconsole.log("SSMC Sync Data Loaded:", new Date().toLocaleString());`;
+        fs.writeFileSync(syncFile, syncContent);
+        
         console.log("--- TÜM VERİLER BAŞARIYLA YENİLENDİ VE KAYDEDİLDİ ---");
         return true;
     } catch (err) {
