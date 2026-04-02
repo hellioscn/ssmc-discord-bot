@@ -37,6 +37,7 @@ const normalizeCountry = (name) => {
 };
 
 let cache = {
+    lastUpdate: null,
     members: { data: null, lastRefresh: null },
     memorial: { data: null, lastRefresh: null },
     gallery: { data: null, lastRefresh: null },
@@ -242,6 +243,7 @@ async function bulkRefresh() {
         cache.patches.data = patches;
         cache.kultur.data = kultur;
         cache.mapData.data = mapData;
+        cache.lastUpdate = Date.now();
 
         fs.writeFileSync(DATA_FILE, JSON.stringify(cache, null, 2));
         console.log("--- TÜM VERİLER BAŞARIYLA YENİLENDİ VE KAYDEDİLDİ ---");
@@ -257,6 +259,7 @@ function loadInitialData() {
         try {
             const data = fs.readFileSync(DATA_FILE, 'utf8');
             const parsed = JSON.parse(data);
+            cache.lastUpdate = parsed.lastUpdate || null;
             cache.members.data = parsed.members?.data || null;
             cache.memorial.data = parsed.memorial?.data || null;
             cache.gallery.data = parsed.gallery?.data || null;
@@ -267,6 +270,21 @@ function loadInitialData() {
         } catch (e) {
             console.error("Diskten veri yükleme hatası:", e);
         }
+    }
+}
+
+async function checkAndRefresh() {
+    const now = Date.now();
+    const twentyFourHours = 24 * 60 * 60 * 1000;
+    
+    console.log(`[${new Date().toLocaleString('tr-TR')}] Otomatik veri kontrolü yapılıyor...`);
+    
+    if (!cache.lastUpdate || (now - cache.lastUpdate) >= twentyFourHours) {
+        console.log("Veriler eski veya hiç yok. Yenileme başlatılıyor...");
+        await bulkRefresh();
+    } else {
+        const nextUpdate = new Date(cache.lastUpdate + twentyFourHours);
+        console.log(`Veriler güncel. Bir sonraki olası yenileme: ${nextUpdate.toLocaleString('tr-TR')}`);
     }
 }
 
@@ -295,12 +313,15 @@ client.on('messageCreate', async (message) => {
 
 client.once('ready', async () => {
     console.log(`Bot Yayında: ${client.user.tag}`);
-    loadInitialData(); // Önce diskten yükle (hız için)
-    await bulkRefresh(); // Başlangıçta hemen bir kez tazele
+    loadInitialData(); // Önce diskten yükle
 
-    // Günde bir kez otomatik yenileme (24 saat = 86400000 ms)
-    setInterval(bulkRefresh, 86400000);
-    console.log("Günlük otomatik yenileme zamanlayıcısı aktif.");
+    // İlk kontrolü hemen yap
+    await checkAndRefresh();
+
+    // Her saat başı kontrol et (3600000 ms)
+    // Bu sayede bot her saat başı 24 saatin dolup dolmadığını kontrol eder.
+    setInterval(checkAndRefresh, 3600000);
+    console.log("Saatlik otomatik kontrol zamanlayıcısı aktif.");
 });
 
 client.login(TOKEN);
