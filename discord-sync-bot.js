@@ -275,15 +275,16 @@ function loadInitialData() {
 
 async function checkAndRefresh() {
     const now = Date.now();
-    const twentyFourHours = 24 * 60 * 60 * 1000;
+    // 24 saat yerine 4 saat (4 * 60 dakika * 60 saniye * 1000 milisaniye)
+    const fourHours = 4 * 60 * 60 * 1000; 
     
     console.log(`[${new Date().toLocaleString('tr-TR')}] Otomatik veri kontrolü yapılıyor...`);
     
-    if (!cache.lastUpdate || (now - cache.lastUpdate) >= twentyFourHours) {
-        console.log("Veriler eski veya hiç yok. Yenileme başlatılıyor...");
+    if (!cache.lastUpdate || (now - cache.lastUpdate) >= fourHours) {
+        console.log("Veriler 4 saatten eski veya hiç yok. Yenileme başlatılıyor...");
         await bulkRefresh();
     } else {
-        const nextUpdate = new Date(cache.lastUpdate + twentyFourHours);
+        const nextUpdate = new Date(cache.lastUpdate + fourHours);
         console.log(`Veriler güncel. Bir sonraki olası yenileme: ${nextUpdate.toLocaleString('tr-TR')}`);
     }
 }
